@@ -2,14 +2,19 @@ from scipy.signal import savgol_filter
 import matplotlib.pyplot as plt
 import numpy as np
 from lightkurve.periodogram import BoxLeastSquares
+import lightkurve as lk
 positive=["CP", "PC", "KP"]
 
 def curves(name, i, label, target_len=500, phase_window=0.1):
-  search = lk.search_lightcurve('TIC '+str(name), mission="TESS", author="SPOC")
-  if len(search) == 0:
-      return [], []
-  print("........ "+ str(i+1))
-  lc = search.download()
+  if os.path.isfile(name):
+    lc = lk.LightCurve(np.load(name))
+  else:
+    search = lk.search_lightcurve('TIC '+str(name), mission="TESS", author="SPOC")
+    if len(search) == 0:
+        return [], []
+    print("........ "+ str(i+1))
+    lc = search.download()
+  
   lc = lc.remove_nans().normalize()
 
   # Quitar tendencia instrumental
