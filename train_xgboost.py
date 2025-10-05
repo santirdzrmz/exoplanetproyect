@@ -66,8 +66,10 @@ xgb_model = xgb.XGBClassifier(
     **best_params
 )
 
+
 # Train the model on the full dataset
 xgb_model.fit(X, y)
+
 
 # Save the model and scalers
 xgb_model.save_model("xgboost_model.json")

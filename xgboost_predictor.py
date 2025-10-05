@@ -33,7 +33,7 @@ def preprocess_data(df):
     
     return X
 
-def predict(input_csv_path, model_path="xgboost_model.json"):
+def predict(input_csv_path, model_path="best_xgb_model.joblib"):
     """
     Loads a pre-trained XGBoost model and uses it to predict the class of exoplanets
     from a new CSV file.
@@ -53,8 +53,11 @@ def predict(input_csv_path, model_path="xgboost_model.json"):
     X_new = preprocess_data(new_data.copy())
 
     # Load the pre-trained model
-    model = xgb.XGBClassifier()
-    model.load_model(model_path)
+    model = joblib.load(model_path)
+
+    # Check if the model was loaded successfully
+    if model is None:
+        raise FileNotFoundError(f"Could not load model from {model_path}. Please check the path.")
 
     # Make predictions
     predictions = model.predict(X_new)
@@ -75,7 +78,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Predict exoplanet class using a pre-trained XGBoost model.')
     parser.add_argument('input_csv', type=str, help='Path to the input CSV file.')
-    parser.add_argument('--model_path', type=str, default='xgboost_model.json', help='Path to the pre-trained XGBoost model.')
+    parser.add_argument('--model_path', type=str, default='best_xgb_model.joblib', help='Path to the pre-trained XGBoost model.')
     parser.add_argument('--output_csv', type=str, default='predictions.csv', help='Path to save the output CSV file.')
 
     args = parser.parse_args()

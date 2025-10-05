@@ -5,12 +5,13 @@ import numpy as np
 import base64
 import os
 import matplotlib.pyplot as plt
-import numpy as np
 from scipy.stats import norm
 import tensorflow as tf
 import lightkurve as lk
 from astropy.timeseries import BoxLeastSquares
 from scipy.signal import savgol_filter
+import xgboost as xgb
+import joblib
 
 # === FUNCIONES PARA EL MODELO KERAS ===
 positive = ["CP"]
@@ -777,8 +778,9 @@ elif st.session_state.page == "csv_analysis":
         st.markdown('<p style="color: #b3e5fc; font-size: 1.1rem; margin-bottom: 1rem;">Elige el algoritmo de IA que mejor se adapte a tus datos</p>', unsafe_allow_html=True)
         
         modelos_csv = [
-            "🧠 Red Neuronal Avanzada - Análisis de patrones complejos",
+            "🚀 XGBoost - Clasificación de Disposición de Exoplanetas",
             "🌠 Gradient Boosting - Clasificación de exoplanetas", 
+            "🧠 Red Neuronal Avanzada - Análisis de patrones complejos",
             "📊 Random Forest - Análisis multivariable"
         ]
         
@@ -799,229 +801,331 @@ elif st.session_state.page == "csv_analysis":
         if st.session_state.uploaded_file is None:
             st.warning("📝 Primero sube un archivo para comenzar el análisis")
         else:
-            if st.button("🎯 EJECUTAR ANÁLISIS CON GRADIENT BOOSTING", use_container_width=True, type="primary"):
-                with st.spinner('🔭 Analizando datos con Gradient Boosting...'):
-                    progress_bar = st.progress(0)
-                    
-                    try:
-                        # === CÓDIGO GRADIENT BOOSTING ===
-                        import pandas as pd
-                        import matplotlib.pyplot as plt
-                        from tsfresh import extract_features
-                        from tsfresh.feature_extraction import ComprehensiveFCParameters
-                        from tsfresh.utilities.dataframe_functions import impute
-                        from joblib import load
-                        import warnings
-                        warnings.filterwarnings("ignore")
-                        
-                        progress_bar.progress(20)
-                        
-                        # 1. CARGAR Y PREPARAR DATOS (CSV O NPY)
-                        st.info("📁 Cargando y procesando datos...")
-                        
-                        file_extension = st.session_state.uploaded_file.name.split('.')[-1].lower()
-                        
-                        if file_extension == 'npy':
-                            # Cargar .npy directamente
-                            flux = np.load(st.session_state.uploaded_file)
-                            
-                        else:  # CSV
-                            # Cargar CSV y extraer la curva de luz
-                            datos_csv = pd.read_csv(st.session_state.uploaded_file)
-                            
-                            # Buscar columnas numéricas para la curva de luz
-                            numeric_cols = datos_csv.select_dtypes(include=[np.number]).columns
-                            
-                            if len(numeric_cols) == 0:
-                                st.error("❌ No se encontraron columnas numéricas en el CSV")
+            if st.button("🎯 EJECUTAR ANÁLISIS SELECCIONADO", use_container_width=True, type="primary"):
+                
+                # --- XGBOOST LOGIC ---
+                if "XGBoost" in modelo_seleccionado:
+                    with st.spinner('🔭 Analizando con el modelo XGBoost...'):
+                        progress_bar = st.progress(0)
+                        try:
+                            st.info("📁 Cargando y procesando datos...")
+                            st.session_state.uploaded_file.seek(0)
+                            data = pd.read_csv(st.session_state.uploaded_file)
+                            progress_bar.progress(10)
+
+                            st.info("⚙️ Cargando modelo XGBoost y pre-procesadores...")
+                            # Paths are relative to the script location in PROGRAMA/
+                            model_path = 'C:/Users/santi/OneDrive/Documents/GitHub/exoplanetproyect/PROGRAMA/xgboost_model.json'
+                            pt_path = 'C:/Users/santi/OneDrive/Documents/GitHub/exoplanetproyect/PROGRAMA/power_transformer.joblib'
+                            scaler_path = 'C:/Users/santi/OneDrive/Documents/GitHub/exoplanetproyect/PROGRAMA/min_max_scaler.joblib'
+                            best_model_path = 'C:/Users/santi/OneDrive/Documents/GitHub/exoplanetproyect/PROGRAMA/best_xgb_model.joblib'
+
+                            # Check if model files exist
+                            if not all(os.path.exists(p) for p in [model_path, pt_path, scaler_path]):
+                                # If not found, try root directory (common when running from root)
+                                model_path = 'xgboost_model.json'
+                                pt_path = 'power_transformer.joblib'
+                                scaler_path = 'min_max_scaler.joblib'
+                                if not all(os.path.exists(p) for p in [model_path, pt_path, scaler_path]):
+                                    st.error("❌ No se encontraron los archivos del modelo XGBoost en la raíz ni en el directorio superior.")
+                                    st.info("💡 Asegúrate de tener estos archivos en la carpeta raíz del proyecto:")
+                                    st.info("- xgboost_model.json")
+                                    st.info("- power_transformer.joblib")
+                                    st.info("- min_max_scaler.joblib")
+                                    st.stop()
+
+                            xgb_model = xgb.XGBClassifier()
+                            xgb_model.load_model(model_path)
+                            pt = joblib.load(pt_path)
+                            scaler = joblib.load(scaler_path)
+                            progress_bar.progress(25)
+
+                            st.info("📊 Preparando datos para el modelo...")
+                            expected_features = xgb_model.get_booster().feature_names
+
+                            missing_cols = [col for col in expected_features if col not in data.columns]
+                            if missing_cols:
+                                st.error(f"❌ Faltan las siguientes columnas requeridas en el archivo CSV: {', '.join(missing_cols)}")
                                 st.stop()
-                            
-                            # Usar la primera columna numérica como curva de luz
-                            flux_column = numeric_cols[0]
-                            flux = datos_csv[flux_column].values
-                            
-                            st.info(f"📋 Usando columna '{flux_column}' para el análisis")
-                        
-                        # 2. PREPROCESAR LA CURVA
-                        flux = np.nan_to_num(flux, nan=np.nanmedian(flux))
-                        flux = (flux - np.mean(flux)) / np.std(flux)
-                        
-                        LENGTH = 2000
-                        # Ajustar longitud
-                        if len(flux) > LENGTH:
-                            flux = flux[:LENGTH]
-                        else:
-                            flux = np.pad(flux, (0, LENGTH - len(flux)), "constant", constant_values=np.nan)
-                        
-                        progress_bar.progress(60)
-                        
-                        # 3. CREAR DATAFRAME PARA tsfresh
-                        df = pd.DataFrame({
-                            "id": [0]*len(flux),
-                            "time": np.arange(len(flux)),
-                            "flux": flux
-                        })
-                        
-                        # 4. EXTRAER FEATURES
-                        st.info("🔍 Extrayendo características de la curva de luz...")
-                        features = extract_features(
-                            df,
-                            column_id="id",
-                            column_sort="time",
-                            column_value="flux",
-                            disable_progressbar=True,
-                            default_fc_parameters=ComprehensiveFCParameters()
-                        )
-                        impute(features)
-                        
-                        progress_bar.progress(80)
-                        
-                        # 5. CARGAR MODELO Y SCALER
-                        st.info("⚙️ Cargando modelo Gradient Boosting...")
+
+                            X_new = data[expected_features].copy()
+
+                            if X_new.isnull().values.any():
+                                st.warning("⚠️ Se encontraron valores faltantes. Rellenando con la media de cada columna.")
+                                X_new = X_new.fillna(X_new.mean())
+
+                            progress_bar.progress(50)
+
+                            st.info("🤖 Aplicando transformaciones...")
+
+                            X_scaled = scaler.transform(X_new)
+                            X_scaled_df = pd.DataFrame(X_scaled, columns=expected_features, index=X_new.index)
+                            progress_bar.progress(75)
+
+                            st.info("🎯 Realizando predicciones...")
+                            predictions = xgb_model.predict(X_scaled_df)
+                            probabilities = xgb_model.predict_proba(X_scaled_df)
+                            progress_bar.progress(100)
+
+                            st.success("✅ Análisis con XGBoost completado!")
+                            st.markdown("---")
+                            st.subheader("📈 Resultados del Análisis XGBoost")
+
+                            class_map_rev = {2: 'CONFIRMADO', 1: 'CANDIDATO', 0: 'OTRO'}
+                            results_df = data.copy()
+                            results_df['prediction'] = [class_map_rev.get(p, 'DESCONOCIDO') for p in predictions]
+                            results_df['confidence_other'] = probabilities[:, 0]
+                            results_df['confidence_candidate'] = probabilities[:, 1]
+                            results_df['confidence_confirmed'] = probabilities[:, 2]
+
+                            summary_counts = results_df['prediction'].value_counts()
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("🪐 Confirmados", summary_counts.get('CONFIRMADO', 0))
+                            with col2:
+                                st.metric("✨ Candidatos", summary_counts.get('CANDIDATO', 0))
+                            with col3:
+                                st.metric("💨 Otros", summary_counts.get('OTRO', 0))
+
+                            st.markdown("#### 📋 Tabla de Resultados Detallados")
+                            display_cols = ['prediction', 'confidence_confirmed', 'confidence_candidate', 'confidence_other'] + expected_features
+                            st.dataframe(results_df[display_cols].style.format({
+                                'confidence_confirmed': '{:.2%}',
+                                'confidence_candidate': '{:.2%}',
+                                'confidence_other': '{:.2%}'
+                            }))
+
+                        except Exception as e:
+                            st.error(f"❌ Error durante el análisis con XGBoost: {str(e)}")
+                
+                # --- GRADIENT BOOSTING LOGIC (EXISTING) ---
+                elif "Gradient Boosting" in modelo_seleccionado:
+                    with st.spinner('🔭 Analizando datos con Gradient Boosting...'):
+                        progress_bar = st.progress(0)
                         
                         try:
-                            # Cargar el scaler y modelo
-                            scaler = load("tess_scaler.joblib")
-                            model = load("tess_tsfresh_gb.joblib")
-                        except FileNotFoundError:
-                            st.error("❌ No se encontraron los archivos del modelo")
-                            st.info("💡 Asegúrate de tener estos archivos en tu carpeta:")
-                            st.info("- tess_scaler.joblib")
-                            st.info("- tess_tsfresh_gb.joblib")
-                            st.stop()
-                        
-                        # 6. ALINEAR COLUMNAS
-                        expected_features = scaler.feature_names_in_ if hasattr(scaler, "feature_names_in_") else features.columns
-                        
-                        # Añadir columnas faltantes con 0
-                        for col in expected_features:
-                            if col not in features.columns:
-                                features[col] = 0.0
-                        
-                        # Reordenar columnas
-                        features = features[expected_features]
-                        
-                        # 7. ESCALAR Y PREDECIR
-                        X_scaled = scaler.transform(features)
-                        y_prob = model.predict_proba(X_scaled)[0, 1]
-                        y_pred = model.predict(X_scaled)[0]
-                        
-                        progress_bar.progress(100)
-                        
-                        # 8. MOSTRAR RESULTADOS EN STREAMLIT
-                        st.success("✅ Análisis completado exitosamente!")
-                        
-                        # === RESULTADOS VISUALES MEJORADOS ===
-                        st.markdown("---")
-                        
-                        # Tarjetas de resultados
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            if y_pred == 1:
-                                st.markdown("""
-                                <div style="background: linear-gradient(45deg, #4CAF50, #8BC34A); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                                    <h2>🪐</h2>
-                                    <h3>EXOPLANETA DETECTADO</h3>
-                                </div>
-                                """, unsafe_allow_html=True)
+                            # === CÓDIGO GRADIENT BOOSTING ===
+                            import pandas as pd
+                            import matplotlib.pyplot as plt
+                            from tsfresh import extract_features
+                            from tsfresh.feature_extraction import ComprehensiveFCParameters
+                            from tsfresh.utilities.dataframe_functions import impute
+                            from joblib import load
+                            import warnings
+                            warnings.filterwarnings("ignore")
+                            
+                            progress_bar.progress(20)
+                            
+                            # 1. CARGAR Y PREPARAR DATOS (CSV O NPY)
+                            st.info("📁 Cargando y procesando datos...")
+                            
+                            file_extension = st.session_state.uploaded_file.name.split('.')[-1].lower()
+                            
+                            if file_extension == 'npy':
+                                # Cargar .npy directamente
+                                flux = np.load(st.session_state.uploaded_file)
+                                
+                            else:  # CSV
+                                # Cargar CSV y extraer la curva de luz
+                                datos_csv = pd.read_csv(st.session_state.uploaded_file)
+                                
+                                # Buscar columnas numéricas para la curva de luz
+                                numeric_cols = datos_csv.select_dtypes(include=[np.number]).columns
+                                
+                                if len(numeric_cols) == 0:
+                                    st.error("❌ No se encontraron columnas numéricas en el CSV")
+                                    st.stop()
+                                
+                                # Usar la primera columna numérica como curva de luz
+                                flux_column = numeric_cols[0]
+                                flux = datos_csv[flux_column].values
+                                
+                                st.info(f"📋 Usando columna '{flux_column}' para el análisis")
+                            
+                            # 2. PREPROCESAR LA CURVA
+                            flux = np.nan_to_num(flux, nan=np.nanmedian(flux))
+                            flux = (flux - np.mean(flux)) / np.std(flux)
+                            
+                            LENGTH = 2000
+                            # Ajustar longitud
+                            if len(flux) > LENGTH:
+                                flux = flux[:LENGTH]
                             else:
-                                st.markdown("""
-                                <div style="background: linear-gradient(45deg, #f44336, #FF9800); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                                    <h2>💨</h2>
-                                    <h3>NO ES EXOPLANETA</h3>
+                                flux = np.pad(flux, (0, LENGTH - len(flux)), "constant", constant_values=np.nan)
+                            
+                            progress_bar.progress(60)
+                            
+                            # 3. CREAR DATAFRAME PARA tsfresh
+                            df = pd.DataFrame({
+                                "id": [0]*len(flux),
+                                "time": np.arange(len(flux)),
+                                "flux": flux
+                            })
+                            
+                            # 4. EXTRAER FEATURES
+                            st.info("🔍 Extrayendo características de la curva de luz...")
+                            features = extract_features(
+                                df,
+                                column_id="id",
+                                column_sort="time",
+                                column_value="flux",
+                                disable_progressbar=True,
+                                default_fc_parameters=ComprehensiveFCParameters()
+                            )
+                            impute(features)
+                            
+                            progress_bar.progress(80)
+                            
+                            # 5. CARGAR MODELO Y SCALER
+                            st.info("⚙️ Cargando modelo Gradient Boosting...")
+                            
+                            try:
+                                # Cargar el scaler y modelo
+                                scaler = load("tess_scaler.joblib")
+                                model = load("tess_tsfresh_gb.joblib")
+                            except FileNotFoundError:
+                                st.error("❌ No se encontraron los archivos del modelo")
+                                st.info("💡 Asegúrate de tener estos archivos en tu carpeta:")
+                                st.info("- tess_scaler.joblib")
+                                st.info("- tess_tsfresh_gb.joblib")
+                                st.stop()
+                            
+                            # 6. ALINEAR COLUMNAS
+                            expected_features = scaler.feature_names_in_ if hasattr(scaler, "feature_names_in_") else features.columns
+                            
+                            # Añadir columnas faltantes con 0
+                            for col in expected_features:
+                                if col not in features.columns:
+                                    features[col] = 0.0
+                            
+                            # Reordenar columnas
+                            features = features[expected_features]
+                            
+                            # 7. ESCALAR Y PREDECIR
+                            X_scaled = scaler.transform(features)
+                            y_prob = model.predict_proba(X_scaled)[0, 1]
+                            y_pred = model.predict(X_scaled)[0]
+                            
+                            progress_bar.progress(100)
+                            
+                            # 8. MOSTRAR RESULTADOS EN STREAMLIT
+                            st.success("✅ Análisis completado exitosamente!")
+                            
+                            # === RESULTADOS VISUALES MEJORADOS ===
+                            st.markdown("---")
+                            
+                            # Tarjetas de resultados
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                if y_pred == 1:
+                                    st.markdown("""
+                                    <div style="background: linear-gradient(45deg, #4CAF50, #8BC34A); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                                        <h2>🪐</h2>
+                                        <h3>EXOPLANETA DETECTADO</h3>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.markdown("""
+                                    <div style="background: linear-gradient(45deg, #f44336, #FF9800); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                                        <h2>💨</h2>
+                                        <h3>NO ES EXOPLANETA</h3>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            with col2:
+                                # Barra de probabilidad
+                                st.markdown(f"""
+                                <div style="background: rgba(255,255,255,0.1); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                                    <h3>Confianza del Modelo</h3>
+                                    <h1 style="color: #4fc3f7; margin: 1rem 0;">{y_prob:.1%}</h1>
+                                    <div style="background: rgba(255,255,255,0.2); height: 20px; border-radius: 10px; margin: 1rem 0;">
+                                        <div style="background: linear-gradient(45deg, #4fc3f7, #9575cd); height: 100%; width: {y_prob*100}%; border-radius: 10px;"></div>
+                                    </div>
                                 </div>
                                 """, unsafe_allow_html=True)
-                        
-                        with col2:
-                            # Barra de probabilidad
-                            st.markdown(f"""
-                            <div style="background: rgba(255,255,255,0.1); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                                <h3>Confianza del Modelo</h3>
-                                <h1 style="color: #4fc3f7; margin: 1rem 0;">{y_prob:.1%}</h1>
-                                <div style="background: rgba(255,255,255,0.2); height: 20px; border-radius: 10px; margin: 1rem 0;">
-                                    <div style="background: linear-gradient(45deg, #4fc3f7, #9575cd); height: 100%; width: {y_prob*100}%; border-radius: 10px;"></div>
+                            
+                            with col3:
+                                st.markdown(f"""
+                                <div style="background: rgba(255,255,255,0.1); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                                    <h3>📊 Datos Analizados</h3>
+                                    <p style="font-size: 1.2rem; margin: 0.5rem 0;">Muestras: {len(flux)}</p>
+                                    <p style="font-size: 1.2rem; margin: 0.5rem 0;">Características: {len(features.columns)}</p>
                                 </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        with col3:
-                            st.markdown(f"""
-                            <div style="background: rgba(255,255,255,0.1); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                                <h3>📊 Datos Analizados</h3>
-                                <p style="font-size: 1.2rem; margin: 0.5rem 0;">Muestras: {len(flux)}</p>
-                                <p style="font-size: 1.2rem; margin: 0.5rem 0;">Características: {len(features.columns)}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        # GRÁFICA DE LA CURVA DE LUZ
-                        st.markdown("---")
-                        st.subheader("📈 Curva de Luz Analizada")
-                        
-                        fig, ax = plt.subplots(figsize=(12, 6))
-                        ax.plot(flux, color='#4fc3f7', linewidth=2, alpha=0.8)
-                        ax.set_title(f'Curva de Luz - {st.session_state.uploaded_file.name}', 
-                                   fontsize=16, color='white', pad=20)
-                        ax.set_xlabel('Tiempo (puntos normalizados)', color='white', fontsize=12)
-                        ax.set_ylabel('Flujo Normalizado', color='white', fontsize=12)
-                        ax.grid(True, alpha=0.3, color='white')
-                        ax.set_facecolor('none')
-                        fig.patch.set_facecolor('none')
-                        
-                        # Color del gráfico para tema oscuro
-                        ax.tick_params(colors='white')
-                        for spine in ax.spines.values():
-                            spine.set_color('white')
-                        
-                        st.pyplot(fig)
-                        
-                        # INFORMACIÓN DETALLADA
-                        with st.expander("🔍 VER DETALLES TÉCNICOS", expanded=False):
-                            col_info1, col_info2 = st.columns(2)
+                                """, unsafe_allow_html=True)
                             
-                            with col_info1:
-                                st.markdown("**📋 Información del Modelo:**")
-                                st.write(f"- **Algoritmo:** Gradient Boosting")
-                                st.write(f"- **Tipo:** Clasificación Binaria")
-                                st.write(f"- **Características usadas:** {len(features.columns)}")
-                                st.write(f"- **Preprocesamiento:** tsfresh + StandardScaler")
+                            # GRÁFICA DE LA CURVA DE LUZ
+                            st.markdown("---")
+                            st.subheader("📈 Curva de Luz Analizada")
                             
-                            with col_info2:
-                                st.markdown("**📊 Métricas de la Curva:**")
-                                st.write(f"- **Longitud:** {len(flux)} puntos")
-                                st.write(f"- **Media:** {np.mean(flux):.3f}")
-                                st.write(f"- **Desviación estándar:** {np.std(flux):.3f}")
-                                st.write(f"- **Rango:** {np.min(flux):.3f} a {np.max(flux):.3f}")
+                            fig, ax = plt.subplots(figsize=(12, 6))
+                            ax.plot(flux, color='#4fc3f7', linewidth=2, alpha=0.8)
+                            ax.set_title(f'Curva de Luz - {st.session_state.uploaded_file.name}', 
+                                       fontsize=16, color='white', pad=20)
+                            ax.set_xlabel('Tiempo (puntos normalizados)', color='white', fontsize=12)
+                            ax.set_ylabel('Flujo Normalizado', color='white', fontsize=12)
+                            ax.grid(True, alpha=0.3, color='white')
+                            ax.set_facecolor('none')
+                            fig.patch.set_facecolor('none')
+                            
+                            # Color del gráfico para tema oscuro
+                            ax.tick_params(colors='white')
+                            for spine in ax.spines.values():
+                                spine.set_color('white')
+                            
+                            st.pyplot(fig)
+                            
+                            # INFORMACIÓN DETALLADA
+                            with st.expander("🔍 VER DETALLES TÉCNICOS", expanded=False):
+                                col_info1, col_info2 = st.columns(2)
+                                
+                                with col_info1:
+                                    st.markdown("**📋 Información del Modelo:**")
+                                    st.write(f"- **Algoritmo:** Gradient Boosting")
+                                    st.write(f"- **Tipo:** Clasificación Binaria")
+                                    st.write(f"- **Características usadas:** {len(features.columns)}")
+                                    st.write(f"- **Preprocesamiento:** tsfresh + StandardScaler")
+                                
+                                with col_info2:
+                                    st.markdown("**📊 Métricas de la Curva:**")
+                                    st.write(f"- **Longitud:** {len(flux)} puntos")
+                                    st.write(f"- **Media:** {np.mean(flux):.3f}")
+                                    st.write(f"- **Desviación estándar:** {np.std(flux):.3f}")
+                                    st.write(f"- **Rango:** {np.min(flux):.3f} a {np.max(flux):.3f}")
+                            
+                            # RECOMENDACIONES BASADAS EN EL RESULTADO
+                            st.markdown("---")
+                            st.subheader("💡 Interpretación de Resultados")
+                            
+                            if y_prob > 0.8:
+                                st.success("""
+                                **🎯 Alta probabilidad de exoplaneta detectado!**
+                                - La curva de luz muestra patrones consistentes con tránsitos planetarios
+                                - Recomendamos análisis adicional con otros métodos
+                                - Considerar observaciones de seguimiento
+                                """)
+                            elif y_prob > 0.5:
+                                st.warning("""
+                                **⚠️ Señal ambigua detectada**
+                                - Posible candidato a exoplaneta
+                                - Se recomienda análisis más profundo
+                                - Verificar con datos adicionales
+                                """)
+                            else:
+                                st.info("""
+                                **🔍 No se detectaron señales fuertes de exoplaneta**
+                                - La curva no muestra patrones claros de tránsito
+                                - Podría ser ruido o variabilidad estelar
+                                - Considerar analizar otras curvas
+                                """)
                         
-                        # RECOMENDACIONES BASADAS EN EL RESULTADO
-                        st.markdown("---")
-                        st.subheader("💡 Interpretación de Resultados")
-                        
-                        if y_prob > 0.8:
-                            st.success("""
-                            **🎯 Alta probabilidad de exoplaneta detectado!**
-                            - La curva de luz muestra patrones consistentes con tránsitos planetarios
-                            - Recomendamos análisis adicional con otros métodos
-                            - Considerar observaciones de seguimiento
-                            """)
-                        elif y_prob > 0.5:
-                            st.warning("""
-                            **⚠️ Señal ambigua detectada**
-                            - Posible candidato a exoplaneta
-                            - Se recomienda análisis más profundo
-                            - Verificar con datos adicionales
-                            """)
-                        else:
-                            st.info("""
-                            **🔍 No se detectaron señales fuertes de exoplaneta**
-                            - La curva no muestra patrones claros de tránsito
-                            - Podría ser ruido o variabilidad estelar
-                            - Considerar analizar otras curvas
-                            """)
-                    
-                    except Exception as e:
-                        st.error(f"❌ Error en el análisis: {str(e)}")
-        
+                        except Exception as e:
+                            st.error(f"❌ Error en el análisis: {str(e)}")
+                
+                # --- OTHER MODELS ---
+                else:
+                    st.warning(f"El modelo '{modelo_seleccionado}' aún no está implementado. Por favor, selecciona otro.")
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     # BOTÓN PARA VOLVER
@@ -1306,143 +1410,5 @@ elif st.session_state.page == "manual_analysis":
     # RESULTADOS
     # RESULTADOS
 # RESULTADOS CON MODELO KERAS
-if analyze_clicked:
-    with st.spinner('🔭 Analizando con Red Neuronal...'):
-        progress_bar = st.progress(0)
-        
-        try:
-            # 1. CARGAR MODELO KERAS
-            st.info("🧠 Cargando modelo de Red Neuronal...")
-            model = tf.keras.models.load_model("exoplanetia_model.keras")
-            progress_bar.progress(30)
-            
-            # 2. PREPARAR DATOS PARA EL MODELO
-            st.info("📊 Procesando datos de entrada...")
-            
-            # Usar los datos del formulario para crear entrada del modelo
-            # Aquí necesitamos adaptar según lo que espera tu modelo
-            # Por ahora usaremos datos de ejemplo
-            X_input = np.random.randn(200).astype(np.float32)  # EJEMPLO
-            X = X_input.reshape(1, 200, 1)
-            
-            progress_bar.progress(60)
-            
-            # 3. REALIZAR PREDICCIÓN CON INCERTIDUMBRE
-            st.info("🎯 Realizando predicción con Monte Carlo Dropout...")
-            T = 50
-            thr = 0.1
-            
-            prob, interval = predict_with_uncertainty(model, X, T=T, threshold=thr)
-            
-            progress_bar.progress(100)
-            
-            # 4. MOSTRAR RESULTADOS
-            st.success("✅ Análisis completado!")
-            
-            # === RESULTADOS VISUALES ===
-            st.markdown("---")
-            
-            # Tarjetas de resultados
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if prob > 0.5:
-                    st.markdown("""
-                    <div style="background: linear-gradient(45deg, #4CAF50, #8BC34A); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                        <h2>🪐</h2>
-                        <h3>EXOPLANETA DETECTADO</h3>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown("""
-                    <div style="background: linear-gradient(45deg, #f44336, #FF9800); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                        <h2>💨</h2>
-                        <h3>NO ES EXOPLANETA</h3>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            with col2:
-                # Barra de probabilidad con intervalo de confianza
-                st.markdown(f"""
-                <div style="background: rgba(255,255,255,0.1); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                    <h3>Probabilidad de Exoplaneta</h3>
-                    <h1 style="color: #4fc3f7; margin: 1rem 0;">{prob:.1%}</h1>
-                    <div style="background: rgba(255,255,255,0.2); height: 20px; border-radius: 10px; margin: 1rem 0; position: relative;">
-                        <div style="background: linear-gradient(45deg, #4fc3f7, #9575cd); height: 100%; width: {prob*100}%; border-radius: 10px;"></div>
-                    </div>
-                    <p style="color: #b3e5fc; font-size: 0.9rem;">Intervalo: {interval[0]:.1%} - {interval[1]:.1%}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown(f"""
-                <div style="background: rgba(255,255,255,0.1); padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                    <h3>📊 Métricas del Modelo</h3>
-                    <p style="font-size: 1.1rem; margin: 0.5rem 0;">Muestras MC: {T}</p>
-                    <p style="font-size: 1.1rem; margin: 0.5rem 0;">Confianza: 95%</p>
-                    <p style="font-size: 1.1rem; margin: 0.5rem 0;">Umbral: {thr}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # INFORMACIÓN DETALLADA
-            with st.expander("🔍 VER DETALLES TÉCNICOS", expanded=False):
-                col_info1, col_info2 = st.columns(2)
-                
-                with col_info1:
-                    st.markdown("**📋 Información del Modelo:**")
-                    st.write("- **Algoritmo:** Red Neuronal con Dropout")
-                    st.write("- **Tipo:** Clasificación con Incertidumbre")
-                    st.write("- **Técnica:** Monte Carlo Dropout")
-                    st.write("- **Entrada:** Curvas de luz (200 puntos)")
-                
-                with col_info2:
-                    st.markdown("**📊 Resultados Estadísticos:**")
-                    st.write(f"- **Probabilidad media:** {prob:.3f}")
-                    st.write(f"- **Intervalo inferior:** {interval[0]:.3f}")
-                    st.write(f"- **Intervalo superior:** {interval[1]:.3f}")
-                    st.write(f"- **Ancho del intervalo:** {interval[1]-interval[0]:.3f}")
-            
-            # INTERPRETACIÓN DE RESULTADOS
-            st.markdown("---")
-            st.subheader("💡 Interpretación de Resultados")
-            
-            if prob > 0.7:
-                st.success("""
-                **🎯 Alta confianza en la detección!**
-                - La red neuronal muestra alta probabilidad de exoplaneta
-                - El intervalo de confianza es consistente
-                - Recomendado para observaciones de seguimiento
-                """)
-            elif prob > 0.3:
-                st.warning("""
-                **⚠️ Señal con incertidumbre moderada**
-                - Probabilidad intermedia de exoplaneta
-                - Se recomienda análisis adicional
-                - Considerar otros métodos de validación
-                """)
-            else:
-                st.info("""
-                **🔍 Baja probabilidad de exoplaneta**
-                - La señal no es suficientemente convincente
-                - Podría ser ruido o falsos positivos
-                - Recomendado analizar otros candidatos
-                """)
-                
-            # NOTA SOBRE LA INCERTIDUMBRE
-            st.markdown("---")
-            st.subheader("🎯 Sobre la Incertidumbre del Modelo")
-            st.info("""
-            **Monte Carlo Dropout:** Esta técnica realiza múltiples predicciones activando el dropout 
-            durante la inferencia, permitiendo estimar la incertidumbre del modelo. Un intervalo más 
-            amplio indica mayor incertidumbre en la predicción.
-            """)
-        
-        except Exception as e:
-            st.error(f"❌ Error en el análisis: {str(e)}")
-            st.info("💡 Asegúrate de que el archivo 'exoplanetia_model.keras' esté en la carpeta correcta")
-    # BOTÓN PARA VOLVER
-    st.markdown("<br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("← VOLVER AL MENÚ PRINCIPAL", use_container_width=True, key="back_from_manual"):
-            trigger_transition("method_selection")
+
+
